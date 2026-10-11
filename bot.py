@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, View
 import asyncio
+import re
+import unicodedata
  
 intents = discord.Intents.default()
 intents.message_content = True
@@ -142,34 +144,55 @@ class PrivateFarmView(View):
     @discord.ui.button(label="Meus Farms", style=discord.ButtonStyle.primary, emoji="📊", custom_id="btn_meus_farms")
     async def meus_farms(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer(ephemeral=True)
-        
+ 
         guild = interaction.guild
         user = interaction.user
-        
-        # Procura o canal geral de registos
+ 
         canal_geral = discord.utils.get(guild.text_channels, name="registro-de-farm")
         if not canal_geral:
             await interaction.followup.send("❌ O canal `registro-de-farm` não foi encontrado no servidor.", ephemeral=True)
             return
  
-        farms_encontrados = []
-        
-        # Lê as últimas 100 mensagens do canal de registos para encontrar as do utilizador
-        async for message in canal_geral.history(limit=100):
-            # Verifica se a mensagem foi enviada pelo bot e menciona o utilizador nos embeds ou texto
+        def normalizar(texto):
+            # tira acento e deixa minúsculo: "Pólvora" e "polvora" viram o mesmo item
+            sem_acento = unicodedata.normalize("NFD", texto)
+            sem_acento = "".join(c for c in sem_acento if unicodedata.category(c) != "Mn")
+            return sem_acento.lower().strip()
+ 
+        totais = {}  # nome normalizado -> [nome pra exibir, quantidade]
+ 
+        async for message in canal_geral.history(limit=500):
             if message.author == bot.user and message.embeds:
                 embed = message.embeds[0]
-                if embed.description and user.mention in embed.description:
-                    farms_encontrados.append(embed.description)
+                if not embed.description or user.mention not in embed.description:
+                    continue
  
-        if not farms_encontrados:
-            await interaction.followup.send("📊 Ainda não tem nenhum farm registado esta semana.", ephemeral=True)
+                trechos = re.findall(r"`([^`]+)`", embed.description)
+                if not trechos:
+                    continue
+ 
+                for parte in trechos[-1].split(","):
+                    parte = parte.strip()
+                    # aceita "polvora 50" e também "50 polvora"
+                    m = re.match(r"^(.+?)\s+(\d+)$", parte) or re.match(r"^(\d+)\s+(.+)$", parte)
+                    if not m:
+                        continue
+                    if m.group(1).isdigit():
+                        qtd, nome = int(m.group(1)), m.group(2)
+                    else:
+                        nome, qtd = m.group(1), int(m.group(2))
+ 
+                    chave = normalizar(nome)
+                    if chave not in totais:
+                        totais[chave] = [nome.strip().capitalize(), 0]
+                    totais[chave][1] += qtd
+ 
+        if not totais:
+            await interaction.followup.send("📊 Ainda não tem nenhum farm registado.", ephemeral=True)
             return
  
-        # Monta a resposta com os últimos farms encontrados
-        texto_resposta = f"📊 **Os seus últimos registos de farm:**\n\n"
-        for i, farm in enumerate(farms_encontrados[:5], 1): # Mostra até os últimos 5 registos
-            texto_resposta += f"**Registo {i}:**\n{farm}\n-------------------\n"
+        linhas = [f"• **{nome}:** {qtd}" for nome, qtd in sorted(totais.values(), key=lambda x: -x[1])]
+        texto_resposta = "📊 **O seu farm total:**\n\n" + "\n".join(linhas)
  
         await interaction.followup.send(texto_resposta, ephemeral=True)
  
