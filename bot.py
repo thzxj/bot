@@ -101,6 +101,9 @@ class AprovarSetagemView(View):
  
         try:
             await membro.add_roles(cargo)
+            cargo_visitante = discord.utils.get(interaction.guild.roles, name=CARGO_VISITANTE)
+            if cargo_visitante and cargo_visitante in membro.roles:
+                await membro.remove_roles(cargo_visitante)
             await membro.edit(nick=novo_nick)
         except discord.Forbidden:
             await interaction.followup.send("❌ O bot não tem permissão pra dar o cargo ou trocar o apelido dessa pessoa.", ephemeral=True)
