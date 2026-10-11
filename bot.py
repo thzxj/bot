@@ -15,6 +15,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Nome exato do cargo que a pessoa aceita recebe
 CARGO_APROVADO = "MEMBROS"
  
+# Cargo que todo mundo recebe ao entrar no servidor
+CARGO_VISITANTE = "VISITANTE"
+ 
  
 # ================== SETAGEM ==================
  
@@ -268,6 +271,15 @@ async def on_ready():
     bot.add_view(PrivateFarmView())
     bot.add_view(SetagemPanel())
     bot.add_view(AprovarSetagemView())
+ 
+@bot.event
+async def on_member_join(member):
+    cargo = discord.utils.get(member.guild.roles, name=CARGO_VISITANTE)
+    if cargo:
+        try:
+            await member.add_roles(cargo)
+        except discord.Forbidden:
+            print(f"Sem permissão pra dar o cargo {CARGO_VISITANTE} a {member}")
  
 @bot.event
 async def on_message(message):
