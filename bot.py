@@ -1,16 +1,22 @@
+· PY
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
 import asyncio
-
+ 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
-
+ 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-# NOVO: formulário de setagem
+ 
+# Nome exato do cargo que a pessoa aceita recebe
+CARGO_APROVADO = "MEMBROS"
+ 
+ 
+# ================== SETAGEM ==================
+ 
 class SetagemModal(discord.ui.Modal, title="Pedido de Setagem"):
     nome_ingame = discord.ui.TextInput(
         label="Nome in game",
@@ -36,38 +42,104 @@ class SetagemModal(discord.ui.Modal, title="Pedido de Setagem"):
         required=True,
         max_length=20
     )
-
+ 
     async def on_submit(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="📋 Novo Pedido de Setagem",
-            description=f"**Membro:** {interaction.user.mention}\n"
-                        f"**Nome in game:** {self.nome_ingame.value}\n"
-                        f"**Passaporte:** {self.passaporte.value}\n"
-                        f"**Recrutado por:** {self.recrutador.value}\n"
-                        f"**Telefone:** {self.telefone.value}",
+            description=f"**Membro:** {interaction.user.mention}",
             color=discord.Color.orange()
         )
-        embed.set_footer(text="Amsterdan Farm Bot - Setagem")
-
+        embed.add_field(name="Nome in game", value=self.nome_ingame.value, inline=False)
+        embed.add_field(name="Passaporte", value=self.passaporte.value, inline=False)
+        embed.add_field(name="Recrutado por", value=self.recrutador.value, inline=False)
+        embed.add_field(name="Telefone", value=self.telefone.value, inline=False)
+        embed.set_footer(text=f"ID: {interaction.user.id}")
+ 
         canal_setagem = discord.utils.get(interaction.guild.text_channels, name="pedidos-de-setagem")
         if not canal_setagem:
             await interaction.response.send_message("❌ O canal `pedidos-de-setagem` não foi encontrado no servidor.", ephemeral=True)
             return
-
-        await canal_setagem.send(embed=embed)
+ 
+        await canal_setagem.send(embed=embed, view=AprovarSetagemView())
         await interaction.response.send_message("✅ O seu pedido de setagem foi enviado com sucesso!", ephemeral=True)
-
+ 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         await interaction.response.send_message("❌ Ocorreu um erro ao enviar o pedido.", ephemeral=True)
-
+ 
+ 
+class AprovarSetagemView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+ 
+    @discord.ui.button(label="Aceitar", style=discord.ButtonStyle.success, emoji="✅", custom_id="btn_aceitar_setagem")
+    async def aceitar(self, interaction: discord.Interaction, button: Button):
+        if not interaction.user.guild_permissions.manage_roles:
+            await interaction.response.send_message("❌ Você não tem permissão pra isso.", ephemeral=True)
+            return
+ 
+        await interaction.response.defer(ephemeral=True)
+ 
+        embed = interaction.message.embeds[0]
+        campos = {f.name: f.value for f in embed.fields}
+        user_id = int(embed.footer.text.replace("ID: ", ""))
+ 
+        membro = interaction.guild.get_member(user_id)
+        cargo = discord.utils.get(interaction.guild.roles, name=CARGO_APROVADO)
+ 
+        if not membro:
+            await interaction.followup.send("❌ Esse usuário não está mais no servidor.", ephemeral=True)
+            return
+        if not cargo:
+            await interaction.followup.send(f"❌ O cargo `{CARGO_APROVADO}` não foi encontrado.", ephemeral=True)
+            return
+ 
+        novo_nick = f"{campos['Nome in game']} | {campos['Passaporte']}"[:32]
+ 
+        try:
+            await membro.add_roles(cargo)
+            await membro.edit(nick=novo_nick)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ O bot não tem permissão pra dar o cargo ou trocar o apelido dessa pessoa.", ephemeral=True)
+            return
+ 
+        embed.title = "✅ Setagem Aceita"
+        embed.color = discord.Color.green()
+        embed.add_field(name="Aceito por", value=interaction.user.mention, inline=False)
+        await interaction.message.edit(embed=embed, view=None)
+        await interaction.followup.send(f"✅ {membro.mention} foi setado como **{novo_nick}**.", ephemeral=True)
+ 
+    @discord.ui.button(label="Recusar", style=discord.ButtonStyle.danger, emoji="❌", custom_id="btn_recusar_setagem")
+    async def recusar(self, interaction: discord.Interaction, button: Button):
+        if not interaction.user.guild_permissions.manage_roles:
+            await interaction.response.send_message("❌ Você não tem permissão pra isso.", ephemeral=True)
+            return
+ 
+        embed = interaction.message.embeds[0]
+        embed.title = "❌ Setagem Recusada"
+        embed.color = discord.Color.red()
+        embed.add_field(name="Recusado por", value=interaction.user.mention, inline=False)
+        await interaction.response.edit_message(embed=embed, view=None)
+ 
+ 
+class SetagemPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+ 
+    @discord.ui.button(label="Pedir Setagem", style=discord.ButtonStyle.success, emoji="📋", custom_id="btn_pedir_setagem")
+    async def pedir_setagem(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(SetagemModal())
+ 
+ 
+# ================== FARM ==================
+ 
 class PrivateFarmView(View):
     def __init__(self):
         super().__init__(timeout=None)
-
+ 
     @discord.ui.button(label="Registar Farm", style=discord.ButtonStyle.green, emoji="📋", custom_id="btn_registrar_farm")
     async def registrar_farm(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("📝 Basta digitar diretamente no chat os itens e quantidades (Ex: `pólvora 500, espoleta 100`). O bot irá registar automaticamente!", ephemeral=True)
-
+ 
     @discord.ui.button(label="Meus Farms", style=discord.ButtonStyle.primary, emoji="📊", custom_id="btn_meus_farms")
     async def meus_farms(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer(ephemeral=True)
@@ -80,7 +152,7 @@ class PrivateFarmView(View):
         if not canal_geral:
             await interaction.followup.send("❌ O canal `registro-de-farm` não foi encontrado no servidor.", ephemeral=True)
             return
-
+ 
         farms_encontrados = []
         
         # Lê as últimas 100 mensagens do canal de registos para encontrar as do utilizador
@@ -90,22 +162,22 @@ class PrivateFarmView(View):
                 embed = message.embeds[0]
                 if embed.description and user.mention in embed.description:
                     farms_encontrados.append(embed.description)
-
+ 
         if not farms_encontrados:
             await interaction.followup.send("📊 Ainda não tem nenhum farm registado esta semana.", ephemeral=True)
             return
-
+ 
         # Monta a resposta com os últimos farms encontrados
         texto_resposta = f"📊 **Os seus últimos registos de farm:**\n\n"
         for i, farm in enumerate(farms_encontrados[:5], 1): # Mostra até os últimos 5 registos
             texto_resposta += f"**Registo {i}:**\n{farm}\n-------------------\n"
-
+ 
         await interaction.followup.send(texto_resposta, ephemeral=True)
-
+ 
     @discord.ui.button(label="Notificar", style=discord.ButtonStyle.blurple, emoji="🔔", custom_id="btn_notificar")
     async def notificar(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("🔔 A moderação foi notificada no seu canal.", ephemeral=True)
-
+ 
     @discord.ui.button(label="Fechar", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="btn_fechar_canal")
     async def fechar_canal(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("🔒 Este canal será encerrado em instantes...", ephemeral=True)
@@ -114,35 +186,35 @@ class PrivateFarmView(View):
             await interaction.channel.delete()
         except:
             pass
-
+ 
 class MainFarmPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
-
+ 
     @discord.ui.button(label="Iniciar Farm", style=discord.ButtonStyle.primary, emoji="📝", custom_id="btn_iniciar_farm")
     async def iniciar_farm(self, interaction: discord.Interaction, button: Button):
         guild = interaction.guild
         user = interaction.user
         channel_name = f"📁・{user.name.lower()}"
-
+ 
         existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
         if existing_channel:
             await interaction.response.send_message(f"❌ Já possui um canal aberto: {existing_channel.mention}", ephemeral=True)
             return
-
+ 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
-
+ 
         category = interaction.channel.category
         new_channel = await guild.create_text_channel(
             name=channel_name,
             category=category,
             overwrites=overwrites
         )
-
+ 
         embed_interno = discord.Embed(
             title="📁 Canal de Farm",
             description="**Digite no chat o que você farmou.**\n\n"
@@ -159,30 +231,27 @@ class MainFarmPanel(View):
             color=discord.Color.dark_green()
         )
         embed_interno.set_footer(text="Amsterdan Farm Bot")
-
+ 
         await new_channel.send(content=f"{user.mention}", embed=embed_interno, view=PrivateFarmView())
         await interaction.response.send_message(f"✅ O seu canal foi criado com sucesso: {new_channel.mention}", ephemeral=True)
-
+ 
     @discord.ui.button(label="Ranking Semanal", style=discord.ButtonStyle.secondary, emoji="🏆", custom_id="btn_ranking_farm")
     async def ranking_semanal(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("🏆 **Ranking da Semana:**\n1. Utilizador A - 1000\n2. Utilizador B - 500", ephemeral=True)
-
-    # NOVO: botão que abre o formulário
-    @discord.ui.button(label="Pedir Setagem", style=discord.ButtonStyle.success, emoji="📋", custom_id="btn_pedir_setagem")
-    async def pedir_setagem(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(SetagemModal())
-
+ 
 @bot.event
 async def on_ready():
     print(f"Bot ligado com sucesso como {bot.user}")
     bot.add_view(MainFarmPanel())
     bot.add_view(PrivateFarmView())
-
+    bot.add_view(SetagemPanel())
+    bot.add_view(AprovarSetagemView())
+ 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
-
+ 
     if message.channel.name.startswith("📁・"):
         conteudo = message.content
         
@@ -194,7 +263,7 @@ async def on_message(message):
             )
             embed_privado.set_footer(text="Amsterdan Farm Bot")
             await message.channel.send(embed=embed_privado)
-
+ 
             canal_geral = discord.utils.get(message.guild.text_channels, name="registro-de-farm")
             if canal_geral:
                 embed_geral = discord.Embed(
@@ -206,9 +275,9 @@ async def on_message(message):
                 )
                 embed_geral.set_footer(text="Amsterdan Farm Bot - Registos")
                 await canal_geral.send(embed=embed_geral)
-
+ 
     await bot.process_commands(message)
-
+ 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def painelfarm(ctx):
@@ -223,6 +292,19 @@ async def painelfarm(ctx):
     )
     embed.set_footer(text="Amsterdan Farm Bot")
     await ctx.send(embed=embed, view=MainFarmPanel())
+ 
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def painelsetagem(ctx):
+    await ctx.message.delete()
+    embed = discord.Embed(
+        title="📋 Setagem — Amsterdã",
+        description="Clique no botão abaixo e preencha o formulário pra pedir a sua setagem.\n\n"
+                    "Depois é só aguardar a análise da staff.",
+        color=discord.Color.orange()
+    )
+    embed.set_footer(text="Amsterdan Farm Bot")
+    await ctx.send(embed=embed, view=SetagemPanel())
     
 import os
 # ...
