@@ -10,6 +10,56 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# NOVO: formulário de setagem
+class SetagemModal(discord.ui.Modal, title="Pedido de Setagem"):
+    nome_ingame = discord.ui.TextInput(
+        label="Nome in game",
+        placeholder="Ex: João Silva",
+        required=True,
+        max_length=50
+    )
+    passaporte = discord.ui.TextInput(
+        label="Passaporte",
+        placeholder="Ex: 12345",
+        required=True,
+        max_length=20
+    )
+    recrutador = discord.ui.TextInput(
+        label="Quem te recrutou",
+        placeholder="Nome de quem te recrutou",
+        required=True,
+        max_length=50
+    )
+    telefone = discord.ui.TextInput(
+        label="Telefone in game",
+        placeholder="Ex: 555-1234",
+        required=True,
+        max_length=20
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="📋 Novo Pedido de Setagem",
+            description=f"**Membro:** {interaction.user.mention}\n"
+                        f"**Nome in game:** {self.nome_ingame.value}\n"
+                        f"**Passaporte:** {self.passaporte.value}\n"
+                        f"**Recrutado por:** {self.recrutador.value}\n"
+                        f"**Telefone:** {self.telefone.value}",
+            color=discord.Color.orange()
+        )
+        embed.set_footer(text="Amsterdan Farm Bot - Setagem")
+
+        canal_setagem = discord.utils.get(interaction.guild.text_channels, name="pedidos-de-setagem")
+        if not canal_setagem:
+            await interaction.response.send_message("❌ O canal `pedidos-de-setagem` não foi encontrado no servidor.", ephemeral=True)
+            return
+
+        await canal_setagem.send(embed=embed)
+        await interaction.response.send_message("✅ O seu pedido de setagem foi enviado com sucesso!", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.response.send_message("❌ Ocorreu um erro ao enviar o pedido.", ephemeral=True)
+
 class PrivateFarmView(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -116,6 +166,11 @@ class MainFarmPanel(View):
     @discord.ui.button(label="Ranking Semanal", style=discord.ButtonStyle.secondary, emoji="🏆", custom_id="btn_ranking_farm")
     async def ranking_semanal(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("🏆 **Ranking da Semana:**\n1. Utilizador A - 1000\n2. Utilizador B - 500", ephemeral=True)
+
+    # NOVO: botão que abre o formulário
+    @discord.ui.button(label="Pedir Setagem", style=discord.ButtonStyle.success, emoji="📋", custom_id="btn_pedir_setagem")
+    async def pedir_setagem(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(SetagemModal())
 
 @bot.event
 async def on_ready():
