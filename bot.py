@@ -4,6 +4,7 @@ from discord.ui import Button, View
 import asyncio
 import re
 import unicodedata
+from datetime import datetime, timedelta, timezone
  
 intents = discord.Intents.default()
 intents.message_content = True
@@ -139,6 +140,14 @@ class SetagemPanel(View):
  
 # ================== FARM ==================
  
+def inicio_da_semana():
+    """Segunda-feira 00:00 no horário de Brasília (UTC-3). O farm conta a partir daqui."""
+    br = timezone(timedelta(hours=-3))
+    agora = datetime.now(br)
+    segunda = (agora - timedelta(days=agora.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    return segunda
+ 
+ 
 class PrivateFarmView(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -167,7 +176,7 @@ class PrivateFarmView(View):
  
         totais = {}  # nome normalizado -> [nome pra exibir, quantidade]
  
-        async for message in canal_geral.history(limit=500):
+        async for message in canal_geral.history(limit=500, after=inicio_da_semana()):
             if message.author == bot.user and message.embeds:
                 embed = message.embeds[0]
                 if not embed.description or user.mention not in embed.description:
@@ -194,11 +203,11 @@ class PrivateFarmView(View):
                     totais[chave][1] += qtd
  
         if not totais:
-            await interaction.followup.send("📊 Ainda não tem nenhum farm registado.", ephemeral=True)
+            await interaction.followup.send("📊 Ainda não tem nenhum farm registado esta semana.", ephemeral=True)
             return
  
         linhas = [f"• **{nome}:** {qtd}" for nome, qtd in sorted(totais.values(), key=lambda x: -x[1])]
-        texto_resposta = "📊 **O seu farm total:**\n\n" + "\n".join(linhas)
+        texto_resposta = "📊 **O seu farm da semana:**\n\n" + "\n".join(linhas)
  
         await interaction.followup.send(texto_resposta, ephemeral=True)
  
@@ -265,7 +274,50 @@ class MainFarmPanel(View):
  
     @discord.ui.button(label="Ranking Semanal", style=discord.ButtonStyle.secondary, emoji="🏆", custom_id="btn_ranking_farm")
     async def ranking_semanal(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_message("🏆 **Ranking da Semana:**\n1. Utilizador A - 1000\n2. Utilizador B - 500", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+ 
+        canal_geral = discord.utils.get(interaction.guild.text_channels, name="registro-de-farm")
+        if not canal_geral:
+            await interaction.followup.send("❌ O canal `registro-de-farm` não foi encontrado no servidor.", ephemeral=True)
+            return
+ 
+        totais = {}  # id do membro -> total de itens farmados na semana
+ 
+        async for message in canal_geral.history(limit=1000, after=inicio_da_semana()):
+            if message.author != bot.user or not message.embeds:
+                continue
+ 
+            desc = message.embeds[0].description
+            if not desc:
+                continue
+ 
+            membro = re.search(r"<@!?(\d+)>", desc)
+            trechos = re.findall(r"`([^`]+)`", desc)
+            if not membro or not trechos:
+                continue
+ 
+            soma = 0
+            for parte in trechos[-1].split(","):
+                m = re.match(r"^(.+?)\s+(\d+)$", parte.strip()) or re.match(r"^(\d+)\s+(.+)$", parte.strip())
+                if not m:
+                    continue
+                soma += int(m.group(2)) if m.group(1).strip() and not m.group(1).isdigit() else int(m.group(1))
+ 
+            uid = int(membro.group(1))
+            totais[uid] = totais.get(uid, 0) + soma
+ 
+        if not totais:
+            await interaction.followup.send("🏆 Ninguém registou farm esta semana ainda.", ephemeral=True)
+            return
+ 
+        medalhas = ["🥇", "🥈", "🥉"]
+        ranking = sorted(totais.items(), key=lambda x: -x[1])[:10]
+        linhas = []
+        for pos, (uid, total) in enumerate(ranking):
+            prefixo = medalhas[pos] if pos < 3 else f"**{pos + 1}.**"
+            linhas.append(f"{prefixo} <@{uid}> — **{total}** itens")
+ 
+        await interaction.followup.send("🏆 **Ranking da Semana:**\n\n" + "\n".join(linhas), ephemeral=True)
  
 @bot.event
 async def on_ready():
