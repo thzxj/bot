@@ -165,6 +165,14 @@ def inicio_da_semana():
 def fim_da_semana():
     return PERIODO_FIM
  
+async def historico_periodo(canal, limite):
+    """Mensagens do canal dentro do período (início e fim definidos acima)."""
+    mensagens = []
+    async for m in canal.history(limit=limite, after=inicio_da_semana(), oldest_first=True):
+        if m.created_at <= fim_da_semana():
+            mensagens.append(m)
+    return mensagens
+ 
  
 class PrivateFarmView(View):
     def __init__(self):
@@ -194,7 +202,7 @@ class PrivateFarmView(View):
  
         totais = {}  # nome normalizado -> [nome pra exibir, quantidade]
  
-        async for message in canal_geral.history(limit=500, after=inicio_da_semana(), before=fim_da_semana()):
+        for message in await historico_periodo(canal_geral, 500):
             if message.author == bot.user and message.embeds:
                 embed = message.embeds[0]
                 if not embed.description or user.mention not in embed.description:
@@ -304,7 +312,7 @@ class MainFarmPanel(View):
  
         totais = {}  # id do membro -> total de itens farmados na semana
  
-        async for message in canal_geral.history(limit=1000, after=inicio_da_semana(), before=fim_da_semana()):
+        for message in await historico_periodo(canal_geral, 1000):
             if message.author != bot.user or not message.embeds:
                 continue
  
@@ -542,13 +550,14 @@ async def resumofarm(ctx, membro: discord.Member = None):
         return
  
     descricoes = []
-    async for message in canal_geral.history(limit=2000, after=inicio_da_semana(), before=fim_da_semana()):
+    mensagens = await historico_periodo(canal_geral, 2000)
+    for message in mensagens:
         if message.author == bot.user and message.embeds and message.embeds[0].description:
             descricoes.append(message.embeds[0].description)
  
     pessoas = somar_registros(descricoes, so_membro=membro.id if membro else None)
     if not pessoas:
-        await ctx.send("📊 Ninguém registou farm esta semana ainda.")
+        await ctx.send(f"📊 Ninguém registou farm neste período ainda. (li {len(mensagens)} mensagens, {len(descricoes)} registos do bot)")
         return
  
     blocos = []
