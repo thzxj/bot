@@ -5,6 +5,7 @@ import asyncio
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
  
 intents = discord.Intents.default()
 intents.message_content = True
@@ -18,6 +19,17 @@ CARGO_APROVADO = "MEMBROS"
  
 # Cargo que todo mundo recebe ao entrar no servidor
 CARGO_VISITANTE = "VISITANTE"
+ 
+# Lista oficial de itens. O bot aceita variações (sem "de", sem acento, com pequenos erros)
+# e registra sempre com o nome oficial daqui. TROQUE/COMPLETE com os nomes certos.
+ITENS = [
+    "Pólvora", "Projétil de Rifle", "Projétil de SMG", "Projétil de Pistola", "Espoleta",
+    "Gatilho de Arma", "Corpo de Arma", "Alça de SMG", "Alça de Rifle", "Alça de Pistola",
+    "Carregador de Rifle", "Carregador de Pistola", "Carregador de SMG",
+]
+ 
+# Itens aceitos e registados, mas que NÃO entram na soma do Meus Farms nem no ranking
+ITENS_NAO_CONTAM = ["Folha de Cânibas"]
  
  
 # ================== SETAGEM ==================
@@ -197,6 +209,9 @@ class PrivateFarmView(View):
                     else:
                         nome, qtd = m.group(1), int(m.group(2))
  
+                    if not conta_pro_farm(nome):
+                        continue
+ 
                     chave = normalizar(nome)
                     if chave not in totais:
                         totais[chave] = [nome.strip().capitalize(), 0]
@@ -258,7 +273,7 @@ class MainFarmPanel(View):
                         "Escreva o nome do item e a quantidade separado por vírgula.\n"
                         "Exemplo: `pólvora 500, espoleta 100`\n\n"
                         "🔫 **MUNIÇÃO:**\n"
-                        "• Pólvora\n• Projétil de Rifle\n• Espoleta\n\n"
+                        "• Pólvora\n• Projétil de Rifle\n• Projétil de SMG\n• Projétil de Pistola\n• Espoleta\n\n"
                         "⚔️ **ARMAS:**\n"
                         "• Gatilho de Arma\n• Corpo de Arma\n• Alça de SMG\n"
                         "• Alça de Rifle\n• Alça de Pistola\n"
@@ -301,10 +316,17 @@ class MainFarmPanel(View):
                 m = re.match(r"^(.+?)\s+(\d+)$", parte.strip()) or re.match(r"^(\d+)\s+(.+)$", parte.strip())
                 if not m:
                     continue
-                soma += int(m.group(2)) if m.group(1).strip() and not m.group(1).isdigit() else int(m.group(1))
+                if m.group(1).isdigit():
+                    qtd, nome = int(m.group(1)), m.group(2)
+                else:
+                    nome, qtd = m.group(1), int(m.group(2))
+                if not conta_pro_farm(nome):
+                    continue
+                soma += qtd
  
-            uid = int(membro.group(1))
-            totais[uid] = totais.get(uid, 0) + soma
+            if soma > 0:
+                uid = int(membro.group(1))
+                totais[uid] = totais.get(uid, 0) + soma
  
         if not totais:
             await interaction.followup.send("🏆 Ninguém registou farm esta semana ainda.", ephemeral=True)
@@ -336,18 +358,95 @@ async def on_member_join(member):
         except discord.Forbidden:
             print(f"Sem permissão pra dar o cargo {CARGO_VISITANTE} a {member}")
  
+PALAVRAS_IGNORADAS = {"de", "da", "do", "das", "dos", "para", "pra"}
+ 
+def normalizar_item(texto):
+    sem_acento = unicodedata.normalize("NFD", texto)
+    sem_acento = "".join(c for c in sem_acento if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^a-z0-9]+", " ", sem_acento.lower()).strip()
+ 
+def tokens_item(texto):
+    return [t for t in normalizar_item(texto).split() if t not in PALAVRAS_IGNORADAS]
+ 
+def achar_item(nome):
+    """Devolve o nome oficial do item mais parecido, ou None se não achar (ou se ficar em dúvida)."""
+    tokens = tokens_item(nome)
+    if not tokens:
+        return None
+    chave = " ".join(sorted(tokens))
+ 
+    pontuacoes = []
+    for oficial in ITENS + ITENS_NAO_CONTAM:
+        tok_oficial = tokens_item(oficial)
+        chave_oficial = " ".join(sorted(tok_oficial))
+        score = SequenceMatcher(None, chave, chave_oficial).ratio()
+        # "gatilho" sozinho conta como "Gatilho de Arma" se só existir um item com essa palavra
+        if all(t in tok_oficial for t in tokens):
+            score = max(score, 0.9)
+        pontuacoes.append((score, oficial))
+ 
+    pontuacoes.sort(reverse=True)
+    melhor = pontuacoes[0]
+    segundo = pontuacoes[1][0] if len(pontuacoes) > 1 else 0
+ 
+    if melhor[0] >= 0.8 and (melhor[0] - segundo >= 0.08 or melhor[0] == 1.0):
+        return melhor[1]
+    return None
+ 
+def conta_pro_farm(nome):
+    """False se o item é do grupo que não conta pro Meus Farms/ranking."""
+    return achar_item(nome) not in ITENS_NAO_CONTAM
+ 
+NOME_ITEM = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \-]{1,39}"
+ 
+def extrair_itens(conteudo):
+    """Lê 'item quantidade' (ou 'quantidade item') separados por vírgula ou quebra de linha.
+    Devolve (itens_validos, partes_invalidas). Menções, links e texto solto são inválidos."""
+    itens = []
+    invalidas = []
+    for parte in re.split(r"[,\n]", conteudo):
+        parte = parte.strip()
+        if not parte:
+            continue
+        m = re.match(rf"^({NOME_ITEM}?)\s+(\d{{1,6}})$", parte)
+        if m:
+            nome, qtd = m.group(1), int(m.group(2))
+        else:
+            m = re.match(rf"^(\d{{1,6}})\s+({NOME_ITEM})$", parte)
+            if not m:
+                invalidas.append(parte)
+                continue
+            qtd, nome = int(m.group(1)), m.group(2)
+        itens.append((re.sub(r"\s+", " ", nome.strip()), qtd))
+    return itens, invalidas
+ 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
  
-    if message.channel.name.startswith("📁・"):
-        conteudo = message.content
-        
-        if "," in conteudo or any(char.isdigit() for char in conteudo):
+    if message.guild and message.channel.name.startswith("📁・"):
+        itens, invalidas = extrair_itens(message.content)
+ 
+        validos = []
+        for nome, qtd in itens:
+            oficial = achar_item(nome)
+            if oficial:
+                validos.append((oficial, qtd))
+            else:
+                invalidas.append(nome)
+ 
+        # Conversa normal, menção ou link (nenhum "item quantidade"): ignora em silêncio
+        if validos and not invalidas:
+            conteudo = ", ".join(f"{nome} {qtd}" for nome, qtd in validos)
+            nao_contam = [n for n, _ in validos if n in ITENS_NAO_CONTAM]
+            aviso_nao_conta = ""
+            if nao_contam:
+                aviso_nao_conta = "\n\nℹ️ " + ", ".join(nao_contam) + " é registado, mas não conta pro ranking."
+ 
             embed_privado = discord.Embed(
                 title="✅ Farm Registado com Sucesso!",
-                description=f"**Itens enviados:**\n`{conteudo}`",
+                description=f"**Itens enviados:**\n`{conteudo}`" + aviso_nao_conta,
                 color=discord.Color.green()
             )
             embed_privado.set_footer(text="Amsterdan Farm Bot")
@@ -364,6 +463,15 @@ async def on_message(message):
                 )
                 embed_geral.set_footer(text="Amsterdan Farm Bot - Registos")
                 await canal_geral.send(embed=embed_geral)
+ 
+        elif itens and invalidas:
+            # Alguma parte não bateu com a lista de itens: não registra nada e avisa
+            await message.channel.send(
+                f"⚠️ {message.author.mention} não registei nada. Não reconheci: "
+                + ", ".join(f"`{p[:40]}`" for p in invalidas[:3])
+                + "\nConfira o nome do item e use o formato `item quantidade, item quantidade`.",
+                delete_after=20
+            )
  
     await bot.process_commands(message)
  
