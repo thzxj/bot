@@ -490,6 +490,93 @@ async def painelfarm(ctx):
     embed.set_footer(text="Amsterdan Farm Bot")
     await ctx.send(embed=embed, view=MainFarmPanel())
  
+def ler_registro(descricao):
+    """Lê a descrição de um 'Novo Registo de Farm' e devolve (id_do_membro, [(item, qtd), ...])."""
+    membro = re.search(r"<@!?(\d+)>", descricao)
+    trechos = re.findall(r"`([^`]+)`", descricao)
+    if not membro or not trechos:
+        return None, []
+    itens = []
+    for parte in trechos[-1].split(","):
+        parte = parte.strip()
+        m = re.match(r"^(.+?)\s+(\d+)$", parte) or re.match(r"^(\d+)\s+(.+)$", parte)
+        if not m:
+            continue
+        if m.group(1).isdigit():
+            qtd, nome = int(m.group(1)), m.group(2)
+        else:
+            nome, qtd = m.group(1), int(m.group(2))
+        itens.append((nome.strip(), qtd))
+    return int(membro.group(1)), itens
+ 
+def somar_registros(descricoes, so_membro=None):
+    """Soma o farm por pessoa: {id: {chave_do_item: [nome, qtd]}}."""
+    pessoas = {}
+    for desc in descricoes:
+        uid, itens = ler_registro(desc)
+        if uid is None or (so_membro and uid != so_membro):
+            continue
+        for nome, qtd in itens:
+            oficial = achar_item(nome)
+            exibir = oficial or nome.capitalize()
+            chave = normalizar_item(exibir)
+            itens_pessoa = pessoas.setdefault(uid, {})
+            if chave not in itens_pessoa:
+                itens_pessoa[chave] = [exibir, 0]
+            itens_pessoa[chave][1] += qtd
+    return pessoas
+ 
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def resumofarm(ctx, membro: discord.Member = None):
+    """!resumofarm  -> farm da semana somado por pessoa | !resumofarm @pessoa -> só uma pessoa"""
+    canal_geral = discord.utils.get(ctx.guild.text_channels, name="registro-de-farm")
+    if not canal_geral:
+        await ctx.send("❌ O canal `registro-de-farm` não foi encontrado no servidor.")
+        return
+ 
+    descricoes = []
+    async for message in canal_geral.history(limit=2000, after=inicio_da_semana()):
+        if message.author == bot.user and message.embeds and message.embeds[0].description:
+            descricoes.append(message.embeds[0].description)
+ 
+    pessoas = somar_registros(descricoes, so_membro=membro.id if membro else None)
+    if not pessoas:
+        await ctx.send("📊 Ninguém registou farm esta semana ainda.")
+        return
+ 
+    blocos = []
+    ordenado = []
+    for uid, itens in pessoas.items():
+        total = sum(qtd for nome, qtd in itens.values() if nome not in ITENS_NAO_CONTAM)
+        ordenado.append((total, uid, itens))
+    ordenado.sort(key=lambda x: -x[0])
+ 
+    for total, uid, itens in ordenado:
+        linhas = []
+        for nome, qtd in sorted(itens.values(), key=lambda x: -x[1]):
+            extra = " *(não conta)*" if nome in ITENS_NAO_CONTAM else ""
+            linhas.append(f"• {nome}: **{qtd}**{extra}")
+        blocos.append(f"<@{uid}> — **{total}** itens\n" + "\n".join(linhas))
+ 
+    # Manda em partes pra não passar do limite de tamanho do Discord
+    parte_atual = ""
+    primeira = True
+    for bloco in blocos + [None]:
+        if bloco is not None and len(parte_atual) + len(bloco) + 2 <= 3800:
+            parte_atual += bloco + "\n\n"
+            continue
+        if parte_atual:
+            embed = discord.Embed(
+                title="📊 Resumo do Farm da Semana" if primeira else "📊 Resumo do Farm (continuação)",
+                description=parte_atual,
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text="Amsterdan Farm Bot - Resumo")
+            await ctx.send(embed=embed)
+            primeira = False
+        parte_atual = (bloco + "\n\n") if bloco is not None else ""
+ 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def painelsetagem(ctx):
