@@ -152,12 +152,18 @@ class SetagemPanel(View):
  
 # ================== FARM ==================
  
+BR_TZ = timezone(timedelta(hours=-3))  # horário de Brasília
+ 
+# Período contado no Meus Farms, Ranking e !resumofarm.
+# Quando começar um novo período/evento, é só trocar essas duas datas.
+PERIODO_INICIO = datetime(2026, 10, 10, 0, 0, 0, tzinfo=BR_TZ)    # sábado 10/10, 00:00
+PERIODO_FIM = datetime(2026, 10, 17, 23, 59, 59, tzinfo=BR_TZ)    # sábado 17/10, 23:59
+ 
 def inicio_da_semana():
-    """Segunda-feira 00:00 no horário de Brasília (UTC-3). O farm conta a partir daqui."""
-    br = timezone(timedelta(hours=-3))
-    agora = datetime.now(br)
-    segunda = (agora - timedelta(days=agora.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-    return segunda
+    return PERIODO_INICIO
+ 
+def fim_da_semana():
+    return PERIODO_FIM
  
  
 class PrivateFarmView(View):
@@ -188,7 +194,7 @@ class PrivateFarmView(View):
  
         totais = {}  # nome normalizado -> [nome pra exibir, quantidade]
  
-        async for message in canal_geral.history(limit=500, after=inicio_da_semana()):
+        async for message in canal_geral.history(limit=500, after=inicio_da_semana(), before=fim_da_semana()):
             if message.author == bot.user and message.embeds:
                 embed = message.embeds[0]
                 if not embed.description or user.mention not in embed.description:
@@ -298,7 +304,7 @@ class MainFarmPanel(View):
  
         totais = {}  # id do membro -> total de itens farmados na semana
  
-        async for message in canal_geral.history(limit=1000, after=inicio_da_semana()):
+        async for message in canal_geral.history(limit=1000, after=inicio_da_semana(), before=fim_da_semana()):
             if message.author != bot.user or not message.embeds:
                 continue
  
@@ -484,7 +490,7 @@ async def painelfarm(ctx):
         description="**Registe os seus farms semanais aqui!**\n\n"
                     "📝 Clique em **Iniciar Farm** para abrir o seu canal privado.\n"
                     "🏆 Clique em **Ranking** para ver quem farmou mais esta semana.\n\n"
-                    "O ranking reseta toda **segunda-feira**.",
+                    "O ranking conta apenas o período do evento atual.",
         color=discord.Color.green()
     )
     embed.set_footer(text="Amsterdan Farm Bot")
@@ -536,7 +542,7 @@ async def resumofarm(ctx, membro: discord.Member = None):
         return
  
     descricoes = []
-    async for message in canal_geral.history(limit=2000, after=inicio_da_semana()):
+    async for message in canal_geral.history(limit=2000, after=inicio_da_semana(), before=fim_da_semana()):
         if message.author == bot.user and message.embeds and message.embeds[0].description:
             descricoes.append(message.embeds[0].description)
  
